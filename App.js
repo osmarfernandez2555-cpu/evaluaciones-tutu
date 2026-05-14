@@ -35,77 +35,6 @@ const OPEN_JEFE = [
   { id: "seguimiento", label: "Seguimiento (Plan de Acción)" },
 ];
 
-/* ─── GOOGLE DRIVE UPLOAD ──────────────────────────────────────────────────
-   Uses Google Drive REST API v3 with OAuth token from Google Identity Services.
-   The CLIENT_ID must be replaced with your own from Google Cloud Console.
-   ─────────────────────────────────────────────────────────────────────────── */
-const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID_HERE"; // ← REEMPLAZAR
-const DRIVE_FOLDER_ID   = "";   // Dejar vacío para raíz, o poner ID de carpeta RRHH
-
-function loadGisScript() {
-  return new Promise((resolve) => {
-    if (window.google && window.google.accounts) { resolve(); return; }
-    const s = document.createElement("script");
-    s.src = "https://accounts.google.com/gsi/client";
-    s.onload = resolve;
-    document.head.appendChild(s);
-  });
-}
-
-async function getAccessToken() {
-  await loadGisScript();
-  return new Promise((resolve, reject) => {
-    const client = window.google.accounts.oauth2.initTokenClient({
-      client_id: GOOGLE_CLIENT_ID,
-      scope: "https://www.googleapis.com/auth/drive.file",
-      callback: (resp) => {
-        if (resp.error) reject(new Error(resp.error));
-        else resolve(resp.access_token);
-      },
-    });
-    client.requestAccessToken({ prompt: "" });
-  });
-}
-
-async function uploadToDrive(filename, content) {
-  const token = await getAccessToken();
-  const metadata = {
-    name: filename,
-    mimeType: "text/plain",
-    ...(DRIVE_FOLDER_ID ? { parents: [DRIVE_FOLDER_ID] } : {}),
-  };
-  const boundary = "tutu_boundary_001";
-  const body = [
-    `--${boundary}`,
-    "Content-Type: application/json; charset=UTF-8",
-    "",
-    JSON.stringify(metadata),
-    `--${boundary}`,
-    "Content-Type: text/plain; charset=UTF-8",
-    "",
-    content,
-    `--${boundary}--`,
-  ].join("\r\n");
-
-  const res = await fetch(
-    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": `multipart/related; boundary=${boundary}`,
-      },
-      body,
-    }
-  );
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error("Error Drive: " + err.substring(0, 200));
-  }
-  return await res.json();
-}
-
-/* ─── HELPERS ──────────────────────────────────────────────────────────── */
 function scoreAvg(scores) {
   const vals = Object.values(scores).filter((v) => v > 0);
   if (!vals.length) return 0;
@@ -152,17 +81,22 @@ function buildContent(role, datos, scores, comments, open) {
   return t;
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   APP COMPONENT
-   ══════════════════════════════════════════════════════════════════════════ */
+function downloadFile(filename, content) {
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement("a");
+  a.href     = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function App() {
-  const [screen,     setScreen]     = useState("home");
-  const [role,       setRole]       = useState(null);
-  const [password,   setPassword]   = useState("");
-  const [pwError,    setPwError]    = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [submitErr,  setSubmitErr]  = useState("");
-  const [submitLog,  setSubmitLog]  = useState("");
+  const [screen,   setScreen]   = useState("home");
+  const [role,     setRole]     = useState(null);
+  const [password, setPassword] = useState("");
+  const [pwError,  setPwError]  = useState("");
+  const [submitErr,setSubmitErr]= useState("");
 
   const [datos,    setDatos]    = useState({ nombre: "", puesto: "", fechaIngreso: "", evaluador: "", periodo: "" });
   const [scores,   setScores]   = useState({});
@@ -181,19 +115,13 @@ export default function App() {
     else setPwError("Contraseña incorrecta. Intentá de nuevo.");
   }
 
-  async function handleSubmit() {
+  function handleSubmit() {
     if (!datos.nombre.trim()) { setSubmitErr("Por favor ingresá el nombre del empleado."); return; }
-    setSubmitting(true); setSubmitErr(""); setSubmitLog("Preparando archivo...");
-    try {
-      const date     = new Date().toLocaleDateString("es-AR").replace(/\//g, "-");
-      const filename = `Evaluacion_${datos.nombre.replace(/\s+/g, "_")}_${date}.txt`;
-      const content  = buildContent(role, datos, scores, comments, open);
-      setSubmitLog("Solicitando acceso a Google Drive...");
-      await uploadToDrive(filename, content);
-      setScreen("success");
-    } catch (e) {
-      setSubmitErr(e.message);
-    } finally { setSubmitting(false); setSubmitLog(""); }
+    const date     = new Date().toLocaleDateString("es-AR").replace(/\//g, "-");
+    const filename = `Evaluacion_${datos.nombre.replace(/\s+/g, "_")}_${date}.txt`;
+    const content  = buildContent(role, datos, scores, comments, open);
+    downloadFile(filename, content);
+    setScreen("success");
   }
 
   function reset() {
@@ -204,7 +132,6 @@ export default function App() {
 
   const openQ = role === "empleado" ? OPEN_EMPLEADO : OPEN_JEFE;
 
-  /* ── HOME ─────────────────────────────────────────────────────────────── */
   if (screen === "home") return (
     <div style={pg}>
       <div style={card}>
@@ -214,17 +141,16 @@ export default function App() {
         <div style={{ display: "flex", gap: 14, marginTop: 8 }}>
           <RoleCard color="linear-gradient(135deg,#1e3a8a,#1e40af)" icon="👤" label="Soy Empleado" desc="Autoevaluación"
             onClick={() => { setRole("empleado"); setScreen("login"); }} />
-          <RoleCard color="linear-gradient(135deg,#4c1d95,#7c3aed)" icon="🏆" label="Soy Jefe"     desc="Evaluar colaborador"
+          <RoleCard color="linear-gradient(135deg,#4c1d95,#7c3aed)" icon="🏆" label="Soy Jefe" desc="Evaluar colaborador"
             onClick={() => { setRole("jefe"); setScreen("login"); }} />
         </div>
-        <p style={{ color: "#1e293b", fontSize: 11, marginTop: 20 }}>
-          Los resultados se guardan en Google Drive de RRHH
+        <p style={{ color: "#334155", fontSize: 11, marginTop: 20 }}>
+          Al finalizar se descarga el archivo automáticamente
         </p>
       </div>
     </div>
   );
 
-  /* ── LOGIN ────────────────────────────────────────────────────────────── */
   if (screen === "login") return (
     <div style={pg}>
       <div style={{ ...card, maxWidth: 400 }}>
@@ -244,32 +170,31 @@ export default function App() {
     </div>
   );
 
-  /* ── SUCCESS ──────────────────────────────────────────────────────────── */
   if (screen === "success") return (
     <div style={pg}>
       <div style={{ ...card, maxWidth: 500, textAlign: "center" }}>
         <div style={{ fontSize: 72, marginBottom: 10 }}>✅</div>
-        <h2 style={h1}>¡Evaluación enviada!</h2>
-        <p style={sub}>Guardado en Google Drive de Recursos Humanos</p>
-        <div style={{ background: "#0d1117", border: "1px solid #1e293b", borderRadius: 8, padding: "12px 16px", color: "#f59e0b", fontSize: 13, fontWeight: 600, marginBottom: 12, wordBreak: "break-all" }}>
+        <h2 style={h1}>¡Evaluación completada!</h2>
+        <p style={sub}>El archivo se descargó automáticamente en tu dispositivo</p>
+        <div style={{ background: "#0d1117", border: "1px solid #1e293b", borderRadius: 8, padding: "12px 16px", color: "#f59e0b", fontSize: 13, fontWeight: 600, marginBottom: 16 }}>
           📄 Evaluacion_{datos.nombre.replace(/\s+/g, "_")}_...txt
         </div>
         {level && (
-          <div style={{ background: level.color + "18", border: `2px solid ${level.color}`, color: level.color, borderRadius: 8, padding: "10px 20px", fontWeight: 700, fontSize: 16, display: "inline-block" }}>
+          <div style={{ background: level.color + "18", border: `2px solid ${level.color}`, color: level.color, borderRadius: 8, padding: "10px 20px", fontWeight: 700, fontSize: 16, display: "inline-block", marginBottom: 16 }}>
             {level.label} — Promedio: {avg.toFixed(2)}
           </div>
         )}
-        <button style={{ ...btnSt, marginTop: 24 }} onClick={reset}>Nueva evaluación</button>
+        <p style={{ color: "#475569", fontSize: 13, marginBottom: 20 }}>
+          📩 Enviá el archivo descargado a Recursos Humanos por WhatsApp o email.
+        </p>
+        <button style={btnSt} onClick={reset}>Nueva evaluación</button>
       </div>
     </div>
   );
 
-  /* ── FORM ─────────────────────────────────────────────────────────────── */
   return (
     <div style={pg}>
       <div style={{ width: "100%", maxWidth: 820 }}>
-
-        {/* Sticky header */}
         <div style={{ background: "#0d1117", border: "1px solid #1e293b", borderRadius: 12, padding: "13px 20px", marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 10, boxShadow: "0 4px 24px rgba(0,0,0,0.6)" }}>
           <Logo small />
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
@@ -285,12 +210,9 @@ export default function App() {
             <h2 style={{ ...h1, textAlign: "left", fontSize: 20 }}>
               {role === "empleado" ? "Autoevaluación de Desempeño" : "Evaluación de Colaborador"}
             </h2>
-            <p style={{ color: "#475569", fontSize: 13 }}>
-              Tutu Automotores — {new Date().toLocaleDateString("es-AR")}
-            </p>
+            <p style={{ color: "#475569", fontSize: 13 }}>Tutu Automotores — {new Date().toLocaleDateString("es-AR")}</p>
           </div>
 
-          {/* Datos */}
           <Sec title="📋 Datos del Colaborador">
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <Fld label="Nombre y Apellido *" value={datos.nombre}       onChange={(v) => setDatos((p) => ({ ...p, nombre: v }))} />
@@ -301,19 +223,15 @@ export default function App() {
             </div>
           </Sec>
 
-          {/* Legend */}
           <div style={{ background: "#0d1117", border: "1px solid #1e293b", borderRadius: 10, padding: "12px 18px", display: "flex", flexWrap: "wrap", gap: "8px 18px" }}>
             {SCORES.map((s) => (
               <div key={s.val} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <div style={{ width: 8, height: 8, borderRadius: "50%", background: s.color }} />
-                <span style={{ color: "#94a3b8", fontSize: 12 }}>
-                  <b style={{ color: s.color }}>{s.val}</b> — {s.label}
-                </span>
+                <span style={{ color: "#94a3b8", fontSize: 12 }}><b style={{ color: s.color }}>{s.val}</b> — {s.label}</span>
               </div>
             ))}
           </div>
 
-          {/* Score sections */}
           {SECTIONS.map((sec) => (
             <Sec key={sec.id} title={sec.title}>
               {sec.items.map((item) => {
@@ -343,7 +261,6 @@ export default function App() {
             </Sec>
           ))}
 
-          {/* Live result */}
           {avg > 0 && level && (
             <div style={{ background: "#0a0f1e", border: `1px solid ${level.color}44`, borderRadius: 12, padding: "18px 22px", display: "flex", alignItems: "center", gap: 20 }}>
               <div>
@@ -356,7 +273,6 @@ export default function App() {
             </div>
           )}
 
-          {/* Open questions */}
           <Sec title={role === "empleado" ? "🧠 Autoevaluación" : "📝 Evaluación Final"}>
             {openQ.map((q) => (
               <div key={q.id} style={{ marginBottom: 16 }}>
@@ -373,18 +289,13 @@ export default function App() {
               ⚠️ {submitErr}
             </div>
           )}
-          {submitting && submitLog && (
-            <div style={{ background: "#0d1a2d", border: "1px solid #1e3a5f", borderRadius: 8, padding: "12px 16px", color: "#93c5fd", fontSize: 13 }}>
-              ⏳ {submitLog}
-            </div>
-          )}
 
-          <button style={{ ...btnSt, width: "100%", fontSize: 16, padding: 16, opacity: submitting ? 0.6 : 1, marginTop: 4 }}
-            onClick={handleSubmit} disabled={submitting}>
-            {submitting ? `⏳ ${submitLog || "Enviando..."}` : "📤 Enviar Evaluación a Google Drive"}
+          <button style={{ ...btnSt, width: "100%", fontSize: 16, padding: 16, marginTop: 4 }}
+            onClick={handleSubmit}>
+            💾 Descargar Evaluación
           </button>
           <p style={{ textAlign: "center", color: "#1e293b", fontSize: 11, margin: "4px 0 32px" }}>
-            Se guardará con el nombre del empleado para que RRHH lo acceda desde Google Drive
+            Se descarga un archivo .txt — enviáselo a RRHH por WhatsApp o email
           </p>
         </div>
       </div>
@@ -392,15 +303,13 @@ export default function App() {
   );
 }
 
-/* ─── Small components ─────────────────────────────────────────────────── */
 function Logo({ small }) {
   return (
     <div style={{ marginBottom: small ? 0 : 8 }}>
       <span style={{ fontSize: small ? 18 : 26, fontWeight: 900, color: "#f59e0b", letterSpacing: 2 }}>TUTU</span>
       {small
         ? <span style={{ fontSize: 10, color: "#334155", letterSpacing: 4, marginLeft: 6 }}>AUTOMOTORES</span>
-        : <span style={{ fontSize: 9, color: "#334155", letterSpacing: 5, display: "block", marginTop: -2 }}>AUTOMOTORES</span>
-      }
+        : <span style={{ fontSize: 9, color: "#334155", letterSpacing: 5, display: "block", marginTop: -2 }}>AUTOMOTORES</span>}
     </div>
   );
 }
@@ -434,7 +343,6 @@ function Fld({ label, value, onChange, type = "text", placeholder, full }) {
   );
 }
 
-/* ─── Shared styles ────────────────────────────────────────────────────── */
 const pg      = { minHeight: "100vh", background: "linear-gradient(160deg,#030712 0%,#0d1117 50%,#030712 100%)", display: "flex", justifyContent: "center", padding: "24px 16px", fontFamily: "'DM Sans','Segoe UI',sans-serif" };
 const card    = { background: "#0d1117", border: "1px solid #1e293b", borderRadius: 20, padding: "40px 32px", width: "100%", maxWidth: 520, textAlign: "center", boxShadow: "0 30px 80px rgba(0,0,0,0.7)", alignSelf: "flex-start" };
 const h1      = { fontSize: 22, fontWeight: 700, color: "#f1f5f9", margin: "10px 0 6px" };
